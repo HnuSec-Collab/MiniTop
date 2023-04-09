@@ -1,0 +1,324 @@
+#!/bin/sh
+# 判断参数类型
+    # 以下最少全调用0次，最多全调用1次
+    # 判断是否有 -h | --help            //输出帮助信息
+        # 退出
+    # 判断是否有 -w | --watch           //动态监视
+        # 开启动态执行
+    # 判断是否有 -f | --full            //返回原文件
+        # 返回所有文件拼接后结果
+    # 以下只能任意参数调用1次
+    # 判断是否有-c -1 | --cpuinfo       // 只显示CPU类型、型号、内核版本等信息从系统启动至今的时间等
+    # 判断是否有-m -2 | --meminfo       // 只显示内存总容量及当前可用内存量
+    # 判断是否有-l -3 | --loadinfo      // 系统平均负载
+    # 判断是否有-f -4 | --fileinfo      // 支持的文件系统类型
+    # 判断是否有-d -5 | --moduleinfo    // 系统正在使用的module信息
+    # 判断是否有-a | --all              // 返回所有信息   
+span=1 #刷新间隔
+
+HelpInfo="COMMAND NAME:minitop\n\n
+
+Usage: minitop [OPTION]... [INFO]\n\n
+
+This procedure is used to monitor system status\n\n
+
+\t-1,-c,\t--cpuinfo\t|\tdisplay cpuinfo\n
+\t-2,-m,\t--meminfo\t|\tdisplay meminfo\n
+\t-3,-l,\t--loadinfo\t|\tdisplay loadinfo\n
+\t-4,-f,\t--fileinfo\t|\tdisplay fileinfo\n
+\t-5,-d,\t--modulesinfo\t|\tdisplay moduleinfo\n
+\t-a,-A,\t--all\t|\tdisplay all message\n\n
+
+\t-h,-H,\t--help\t|\tDisplay help info\n
+\t-w,\t--watch\t|\tDynamic moniter\n
+\t-F,\t--full\t|\tdisplay raw message\n
+"
+
+alias displayHelpInfo='echo -e $HelpInfo'
+
+#region 返回CPU类型、型号、内核版本等信息从系统启动至今的时间
+returnCpuinfo(){
+num1=`cat /proc/uptime | cut -d' ' -f1 | cut -d. -f1`       # 系统启动到现在的时间（以秒为单位）
+num2=`cat /proc/uptime | cut -d' ' -f2 | cut -d. -f1`       # 系统空闲的时间（以秒为单位）
+N=`cat /proc/cpuinfo | grep "model name"  | wc -l`  #逻辑核数
+
+CPUINFO="
+CPU类型：`cat /proc/cpuinfo | grep -v 'model name' | grep 'model' |  cut -d: -f2 | uniq >&1`
+CPU型号：`cat /proc/cpuinfo | grep 'model name' |  cut -d: -f2 | uniq >&1`
+CPU频率：`cat /proc/cpuinfo | grep 'cpu MHz' |  cut -d: -f2 | uniq >&1` MHz
+是否含有FPU：`cat /proc/cpuinfo | grep 'fpu' | grep -v 'fpu_exception' | grep -v 'flags' | cut -d: -f2 | uniq >&1`
+内核版本：`cat /proc/version | cut -d# -f1 >&1`
+系统启动至今时间：`echo $[$num1/3600] >&1`h
+占用率：`echo $[1-($num2/($num1*N))*100] | cut -d. -f1 >&1`%"
+}
+#endregion
+
+#region 返回内存总容量及当前可用内存量
+returnMeminfo(){
+MEMINFO="
+内存总容量：`cat /proc/meminfo | grep MemTotal | cut -d: -f2 | cut -d' ' -f8-9`
+当前可用内存量：`cat /proc/meminfo | grep MemAvailable | cut -d: -f2 | cut -d' ' -f4-5`
+"
+}
+#endregion
+
+#region 返回系统平均负载
+returnLoadinfo(){
+N=`cat /proc/cpuinfo | grep "model name"  | wc -l`  #逻辑核数
+n1=`cat /proc/loadavg | cut -d' ' -f1 | cut -d. -f1``cat /proc/loadavg | cut -d' ' -f1 | cut -d. -f2`   # 1分钟内的平均进程*100
+n2=`cat /proc/loadavg | cut -d' ' -f2 | cut -d. -f1``cat /proc/loadavg | cut -d' ' -f2 | cut -d. -f2`   # 5分钟内的平均进程*100
+n3=`cat /proc/loadavg | cut -d' ' -f3 | cut -d. -f1``cat /proc/loadavg | cut -d' ' -f3 | cut -d. -f2`   # 15分钟内的平均进程*100
+
+n1=`echo -e ${n1} | sed -r 's/0*([0-9])/\1/'`
+n2=`echo -e ${n2} | sed -r 's/0*([0-9])/\1/'`
+n3=`echo -e ${n3} | sed -r 's/0*([0-9])/\1/'`
+
+LOADINFO="系统平均负载（1分钟内）：$[${n1}/$N]%
+系统平均负载（5分钟内）：$[${n2}/$N]%
+系统平均负载（15分钟内）：$[${n3}/$N]%
+"
+}
+#endregion
+
+#region 返回支持的文件系统类型
+returnFileinfo(){
+FILEINFO="支持的虚拟文件系统(`cat /proc/filesystems | grep nodev | cut -f2 | wc -l`种)：`cat /proc/filesystems | grep nodev | cut -f2 |sed ':a;N;s/\n/ /g;ta'`
+支持的实体文件系统(`cat /proc/filesystems | grep -v nodev | cut -f2 | wc -l`种)：`cat /proc/filesystems | grep -v nodev | cut -f2 |sed ':a;N;s/\n/ /g;ta'`\n"
+}
+#endregion
+
+#region 返回系统正在使用的module信息
+returnModulesinfo(){
+MODULESINFO="系统正在使用的module信息：
+模块名\t大小\t使用者\n"
+while read row
+do
+    MODULESINFO+="`echo $row | cut -d' ' -f1`\t`echo $row | cut -d' ' -f2`\t`echo $row | cut -d' ' -f3`\n"
+done < /proc/modules
+}
+
+#endregion
+
+if [ "$#" == "0" ] ;then
+    displayHelpInfo
+    exit
+else
+    for i in "$@"; do
+        if [ "$i" == "-h" -o "$i" == "-H" -o "$i" == "--help" ] ;then
+            displayHelpInfo
+            exit
+        fi
+    done
+    for i in "$@"; do
+        if [ "$i" == "-w" -o "$i" == "--watch"  ] ;then
+            w=1     # 用于监视
+        elif [ "$i" == "-F" -o "$i" == "--full" ] ;then
+            f=1     # 用于展示全局信息
+        fi
+    done
+    for i in "$@"; do
+        if [ "$i" == "-1" -o "$i" == "-c" -o "$i" == "--cpuinfo" ] ;then
+            if [ "$w" = 1 ] ;then
+                while :
+                do
+                    message+="`date -u`\t"
+                    message+="|\tTIME SPAN:${span}s\n"
+                    message+="----------------------------------------------------\n"
+                    message+=">>>---\tCPUINFO:\n"
+                    if [ "$f" = 1 ] ;then
+                        message+="`cat /proc/cpuinfo`\n"
+                        message+="`cat /proc/version`\n"
+                        message+="`cat /proc/uptime`\n"
+                        message+="`cat /proc/stat`\n"
+                    else
+                        returnCpuinfo
+                        message+=$CPUINFO
+                    fi
+                    clear
+                    echo -e "$message"
+                    sleep $span
+                    message=""
+                done
+            else
+                if [ "$f" = 1 ] ;then
+                    cat /proc/cpuinfo /proc/version /proc/uptime /proc/stat
+                else
+                    returnCpuinfo
+                    echo -e "$CPUINFO"
+                fi
+                exit 0
+            fi
+        elif [ "$i" == "-2" -o "$i" == "-m" -o "$i" == "--meminfo" ] ;then
+            if [ "$w" = 1 ] ;then
+                while :
+                do
+                    message+="`date -u`\t"
+                    message+="|\tTIME SPAN:${span}s\n"
+                    message+="----------------------------------------------------\n"
+                    message+=">>>---\tMEMINFO:\n"
+                    if [ "$f" = 1 ] ;then
+                        message+="`cat /proc/meminfo`\n"
+                        message+="`cat /proc/zoneinfo`\n"
+                        message+="`cat /proc/slabinfo`\n"
+                    else
+                        returnMeminfo
+                        message+=$MEMINFO
+                    fi
+                    clear
+                    echo -e "$message"
+                    sleep $span
+                    message=""
+                done
+            else
+                if [ "$f" = 1 ] ;then
+                    cat /proc/meminfo
+                else
+                    returnMeminfo
+                    echo -e "$MEMINFO"
+                fi
+                exit 0
+            fi
+        elif [ "$i" == "-3" -o "$i" == "-l" -o "$i" == "--loadinfo" ] ;then
+            if [ "$w" = 1 ] ;then
+                while :
+                do
+                    message+="`date -u`\t"
+                    message+="|\tTIME SPAN:${span}s\n"
+                    message+="----------------------------------------------------\n"
+                    message+=">>>---\tLOADINFO:\n"
+                    if [ "$f" = 1 ] ;then
+                        message+="`cat /proc/loadavg`\n"
+                    else
+                        returnLoadinfo
+                        message+=$LOADINFO
+                    fi
+                    clear
+                    echo -e "$message"
+                    sleep $span
+                    message=""
+                done
+            else
+                if [ "$f" = 1 ] ;then
+                    cat /proc/loadavg
+                else
+                    returnLoadinfo
+                    echo -e "$LOADINFO"
+                fi
+                exit 0
+            fi
+        elif [ "$i" == "-4" -o "$i" == "-f" -o "$i" == "--fileinfo" ] ;then
+            if [ "$w" = 1 ] ;then
+                while :
+                do
+                    message+="`date -u`\t"
+                    message+="|\tTIME SPAN:${span}s\n"
+                    message+="----------------------------------------------------\n"
+                    message+=">>>---\tFILEINFO:\n"
+                    if [ "$f" = 1 ] ;then
+                        message+="`cat /proc/filesystems`\n"
+                    else
+                        returnFileinfo
+                        message+=$FILEINFO
+                    fi
+                    clear
+                    echo -e "$message"
+                    sleep $span
+                    message=""
+                done
+            else
+                if [ "$f" = 1 ] ;then
+                    cat /proc/filesystems
+                else
+                    returnFileinfo
+                    echo -e "$FILEINFO"
+                fi
+                exit 0
+            fi
+        elif [ "$i" == "-5" -o "$i" == "-d" -o "$i" == "--modulesinfo" ] ;then
+            if [ "$w" = 1 ] ;then
+                while :
+                do
+                    message+="`date -u`\t"
+                    message+="|\tTIME SPAN:${span}s\n"
+                    message+="----------------------------------------------------\n"
+                    message+=">>>---\tMODULESINFO:\n"
+                    if [ "$f" = 1 ] ;then
+                        message+="`cat /proc/modules`\n"
+                    else
+                        returnModulesinfo
+                        message+=$MODULESINFO
+                    fi
+                    clear
+                    echo -e "$message"
+                    sleep $span
+                    message=""
+                done
+            else
+                if [ "$f" = 1 ] ;then
+                    cat /proc/modules
+                else
+                    returnModulesinfo
+                    echo -e "$MODULESINFO"
+                fi
+                exit 0
+            fi
+        elif [ "$i" == "-a" -o "$i" == "-A" -o "$i" == "--all" ] ;then
+            if [ "$w" = 1 ] ;then
+                while :
+                do
+                    message+="`date -u`\t"
+                    message+="|\tTIME SPAN:${span}s\n"
+                    message+="----------------------------------------------------\n"
+                    message+=">>>---\tALLINFO:\n"
+                    if [ "$f" = 1 ] ;then
+                        message+="`cat /proc/cpuinfo`\n"
+                        message+="`cat /proc/version`\n"
+                        message+="`cat /proc/uptime`\n"
+                        message+="`cat /proc/stat`\n"
+                        message+="`cat /proc/meminfo`\n"
+                        message+="`cat /proc/zoneinfo`\n"
+                        message+="`cat /proc/slabinfo`\n"
+                        message+="`cat /proc/loadavg`\n"
+                        message+="`cat /proc/filesystems`\n"
+                        message+="`cat /proc/modules`\n"
+                    else
+                        returnCpuinfo
+                        message+="$CPUINFO\n"
+                        returnMeminfo
+                        message+="$MEMINFO\n"
+                        returnLoadinfo
+                        message+="$LOADINFO\n"
+                        returnFileinfo
+                        message+="$FILEINFO\n"
+                        returnModulesinfo
+                        message+="$MODULESINFO\n"
+                    fi
+                    clear
+                    echo -e "$message"
+                    sleep $span
+                    message=""
+                done
+            else
+                if [ "$f" = 1 ] ;then
+                    cat /proc/cpuinfo /proc/version /proc/uptime /proc/stat
+                    cat /proc/meminfo
+                    cat /proc/loadavg
+                    cat /proc/filesystems
+                    cat /proc/modules
+                else
+                    returnCpuinfo
+                    echo -e $CPUINFO
+                    returnMeminfo
+                    echo -e $MEMINFO
+                    returnLoadinfo
+                    echo -e $LOADINFO
+                    returnFileinfo
+                    echo -e $FILEINFO
+                    returnModulesinfo
+                    echo -e $MODULESINFO
+                fi
+                exit 0
+            fi
+        fi
+    done
+fi
