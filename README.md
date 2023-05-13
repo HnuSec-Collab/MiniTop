@@ -5,6 +5,7 @@ A Bash script to obtain system status information
 
 ```bash
 git clone https://github.com/KevinTong9/MiniTop && cd MiniTop
+# or you can use https://github.com/HnuSec-Collab/MiniTop
 chmod +x minitop && ./minitop -h
 ```
 
@@ -29,3 +30,5 @@ COMMAND NAME:minitop
         -w,     --watch |       Dynamic moniter
         -F,     --full  |       display raw message
 ```
+
+auther:KT
